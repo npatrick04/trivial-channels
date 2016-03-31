@@ -68,27 +68,6 @@
 
 (in-package :trivial-channels)
 
- ;; timing and timeouts
-
-(defun wait-with-timeout (condition mutex seconds)
-  "By default we use TRIVIAL-TIMEOUTS; this can be changed for implementations
-later should it prove less-than-optimal."
-  ;; Don't depend on TRIVIAL-TIMEOUTS for all cases because it *may* be
-  ;; broken on some platforms.
-  (cond
-    ((and seconds (> seconds 0))
-     (handler-case
-         (trivial-timeout:with-timeout (seconds)
-           (bt:condition-wait condition mutex)
-           t)
-       (trivial-timeout:timeout-error (e)
-         (declare (ignore e)))))
-    ;; If (zerop seconds) then we don't wait for anything.
-    ;; --
-    ;; If (null seconds) then wait forever.
-    ((null seconds)
-     (bt:condition-wait condition mutex))))
-
  ;; trivial channels
 
 (defstruct channel
@@ -107,11 +86,16 @@ later should it prove less-than-optimal."
 
 (defun recvmsg (channel &optional timeout)
   (bt:with-lock-held ((channel-q-mutex channel))
-    (loop until (queue-has-item-p (channel-queue channel)) do
-      (wait-with-timeout (channel-q-condition channel)
-                         (channel-q-mutex channel)
-                         timeout))
-    (queue-pop (channel-queue channel))))
+    (do ((has-item? (queue-has-item-p (channel-queue channel))
+		    (queue-has-item-p (channel-queue channel))))
+	(has-item?
+	 (values
+	  (queue-pop (channel-queue channel))
+	  t))
+      (unless (bt:condition-wait (channel-q-condition channel)
+				 (channel-q-mutex channel)
+				 :timeout timeout)
+	(return (values nil))))))
 
 (defun getmsg (channel)
   (bt:with-lock-held ((channel-q-mutex channel))
