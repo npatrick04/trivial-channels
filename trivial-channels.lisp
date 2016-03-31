@@ -76,15 +76,25 @@
   (q-mutex (bt:make-lock)))
 
 (defun hasmsg (channel)
+  "Return T if a message is available at the time of the call.  
+Note: there is no guarantee that a subsequent call to getmsg will
+  succeed if more than one thread is receiving from this channel."
   (bt:with-lock-held ((channel-q-mutex channel))
     (queue-has-item-p (channel-queue channel))))
 
 (defun sendmsg (channel msg)
+  "Send MSG to CHANNEL, notifying a thread that may be waiting."
   (bt:with-lock-held ((channel-q-mutex channel))
     (queue-add (channel-queue channel) msg)
     (bt:condition-notify (channel-q-condition channel))))
 
 (defun recvmsg (channel &optional timeout)
+  "Get a message from CHANNEL.  When unavailable immediately, wait
+TIMEOUT seconds (indefinitely when NULL) for a message to become
+available.
+
+When a message is returned, return (values message t)
+When the recv times out,    return (values nil nil)"
   (bt:with-lock-held ((channel-q-mutex channel))
     (do ((has-item? (queue-has-item-p (channel-queue channel))
 		    (queue-has-item-p (channel-queue channel))))
@@ -95,9 +105,12 @@
       (unless (bt:condition-wait (channel-q-condition channel)
 				 (channel-q-mutex channel)
 				 :timeout timeout)
-	(return (values nil))))))
+	(return (values nil nil))))))
 
 (defun getmsg (channel)
+  "Get a message from CHANNEL, returning (values message t) when
+successful, and (values nil nil) when no message is available."
   (bt:with-lock-held ((channel-q-mutex channel))
-    (when (queue-has-item-p (channel-queue channel))
-      (queue-pop (channel-queue channel)))))
+    (if (queue-has-item-p (channel-queue channel))
+	(values (queue-pop (channel-queue channel)) t)
+	(values nil nil))))
