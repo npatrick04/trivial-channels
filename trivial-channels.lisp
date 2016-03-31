@@ -95,17 +95,28 @@ available.
 
 When a message is returned, return (values message t)
 When the recv times out,    return (values nil nil)"
-  (bt:with-lock-held ((channel-q-mutex channel))
-    (do ((has-item? (queue-has-item-p (channel-queue channel))
-		    (queue-has-item-p (channel-queue channel))))
-	(has-item?
-	 (values
-	  (queue-pop (channel-queue channel))
-	  t))
-      (unless (bt:condition-wait (channel-q-condition channel)
-				 (channel-q-mutex channel)
-				 :timeout timeout)
-	(return (values nil nil))))))
+  (let ((abs-time (+ (get-internal-real-time)
+		     (* internal-time-units-per-second
+			timeout))))
+    (bt:with-lock-held ((channel-q-mutex channel))
+      (do ((has-item? (queue-has-item-p (channel-queue channel))
+		      (queue-has-item-p (channel-queue channel))))
+	  (has-item?
+	   (values
+	    (queue-pop (channel-queue channel))
+	    t))
+	;; Exit when the condition-wait times out, or enough failed
+	;; iterations through this loop result in no more time left.
+	(unless (or (minusp timeout)
+		    (bt:condition-wait (channel-q-condition channel)
+				       (channel-q-mutex channel)
+				       :timeout timeout))
+	  (return (values nil nil)))
+	;; Update the time left.  An expired timeout will be caught in
+	;; the subsequent condition prior to calling condition-wait again.
+	(decf timeout (/ (- abs-time
+			    (get-internal-real-time))
+			 internal-time-units-per-second))))))
 
 (defun getmsg (channel)
   "Get a message from CHANNEL, returning (values message t) when
