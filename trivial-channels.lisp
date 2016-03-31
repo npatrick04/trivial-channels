@@ -88,13 +88,8 @@ Note: there is no guarantee that a subsequent call to getmsg will
     (queue-add (channel-queue channel) msg)
     (bt:condition-notify (channel-q-condition channel))))
 
-(defun recvmsg (channel &optional timeout)
-  "Get a message from CHANNEL.  When unavailable immediately, wait
-TIMEOUT seconds (indefinitely when NULL) for a message to become
-available.
-
-When a message is returned, return (values message t)
-When the recv times out,    return (values nil nil)"
+(defun %recvmsg (channel timeout)
+  "The timeout version of recvmsg"
   (let ((abs-time (+ (get-internal-real-time)
 		     (* internal-time-units-per-second
 			timeout))))
@@ -102,9 +97,7 @@ When the recv times out,    return (values nil nil)"
       (do ((has-item? (queue-has-item-p (channel-queue channel))
 		      (queue-has-item-p (channel-queue channel))))
 	  (has-item?
-	   (values
-	    (queue-pop (channel-queue channel))
-	    t))
+	   (values (queue-pop (channel-queue channel)) t))
 	;; Exit when the condition-wait times out, or enough failed
 	;; iterations through this loop result in no more time left.
 	(unless (or (minusp timeout)
@@ -117,6 +110,24 @@ When the recv times out,    return (values nil nil)"
 	(decf timeout (/ (- abs-time
 			    (get-internal-real-time))
 			 internal-time-units-per-second))))))
+
+(defun recvmsg (channel &optional timeout)
+  "Get a message from CHANNEL.  When unavailable immediately, wait
+TIMEOUT seconds (indefinitely when NULL) for a message to become
+available.
+
+When a message is returned, return (values message t)
+When the recv times out,    return (values nil nil)"
+  (if (numberp timeout)
+      (%recvmsg channel timeout)
+      (bt:with-lock-held ((channel-q-mutex channel))
+	(do ((has-item? (queue-has-item-p (channel-queue channel))
+			(queue-has-item-p (channel-queue channel))))
+	    (has-item?
+	     (values (queue-pop (channel-queue channel)) t))
+	  (unless (bt:condition-wait (channel-q-condition channel)
+				     (channel-q-mutex channel))
+	    (return (values nil nil)))))))
 
 (defun getmsg (channel)
   "Get a message from CHANNEL, returning (values message t) when
