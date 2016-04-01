@@ -90,9 +90,10 @@ Note: there is no guarantee that a subsequent call to getmsg will
 
 (defun %recvmsg (channel timeout)
   "The timeout version of recvmsg"
-  (let ((abs-time (+ (get-internal-real-time)
-		     (* internal-time-units-per-second
-			timeout))))
+  (let ((absolute-real-time
+	 (+ (get-internal-real-time)
+	    (* internal-time-units-per-second
+	       timeout))))
     (bt:with-lock-held ((channel-q-mutex channel))
       (do ((has-item? (queue-has-item-p (channel-queue channel))
 		      (queue-has-item-p (channel-queue channel))))
@@ -100,14 +101,15 @@ Note: there is no guarantee that a subsequent call to getmsg will
 	   (values (queue-pop (channel-queue channel)) t))
 	;; Exit when the condition-wait times out, or enough failed
 	;; iterations through this loop result in no more time left.
-	(unless (or (minusp timeout)
-		    (bt:condition-wait (channel-q-condition channel)
-				       (channel-q-mutex channel)
-				       :timeout timeout))
+	(when (or (minusp timeout)
+		  (not
+		   (bt:condition-wait (channel-q-condition channel)
+				      (channel-q-mutex channel)
+				      :timeout timeout)))
 	  (return (values nil nil)))
 	;; Update the time left.  An expired timeout will be caught in
 	;; the subsequent condition prior to calling condition-wait again.
-	(decf timeout (/ (- abs-time
+	(setf timeout (/ (- absolute-real-time
 			    (get-internal-real-time))
 			 internal-time-units-per-second))))))
 
@@ -125,9 +127,8 @@ When the recv times out,    return (values nil nil)"
 			(queue-has-item-p (channel-queue channel))))
 	    (has-item?
 	     (values (queue-pop (channel-queue channel)) t))
-	  (unless (bt:condition-wait (channel-q-condition channel)
-				     (channel-q-mutex channel))
-	    (return (values nil nil)))))))
+	  (bt:condition-wait (channel-q-condition channel)
+			     (channel-q-mutex channel))))))
 
 (defun getmsg (channel)
   "Get a message from CHANNEL, returning (values message t) when
